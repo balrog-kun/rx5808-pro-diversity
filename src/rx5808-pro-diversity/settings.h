@@ -29,8 +29,8 @@ SOFTWARE.
 
 // Choose the display you will be using
 // you will also have to uncomment the includes in the main project.
-//#define TVOUT_SCREENS
-#define OLED_128x64_ADAFRUIT_SCREENS
+#define TVOUT_SCREENS
+//#define OLED_128x64_ADAFRUIT_SCREENS
 
 // use the library from https://github.com/badzz/Adafruit_SH1106 before enabling
 //#define SH1106
@@ -41,15 +41,15 @@ SOFTWARE.
 
 // Feature Toggles
 #define USE_DIVERSITY
-#define USE_IR_EMITTER
+//#define USE_IR_EMITTER
 //#define USE_FLIP_SCREEN
-#define USE_BOOT_LOGO
+//#define USE_BOOT_LOGO
 // You can use any of the arduino analog pins to measure the voltage of the battery
-//#define USE_VOLTAGE_MONITORING
+#define USE_VOLTAGE_MONITORING
 // Choose if you wish to use 8 additional Channels
 // 5362 MHz 5399 MHz 5436 MHz 5473 MHz 5510 MHz 5547 MHz 5584 MHz 5621 MHz
 // Local laws may prohibit the use of these frequencies use at your own risk!
-//#define USE_LBAND
+#define USE_LBAND
 #define USE_BOOT_CHECK
 #define USE_DIM_ON_SCREENSAVER
 
@@ -58,6 +58,11 @@ SOFTWARE.
 #define rx5808
 //#define rx5880
 
+#define USE_TWO_DIGIT_SWITCH_REG
+#ifdef USE_TWO_DIGIT_SWITCH_REG
+#define switchRegDataPin 10
+#define switchRegClockPin 12
+#endif
 
 #define spiDataPin 10
 #define slaveSelectPin 11
@@ -107,9 +112,9 @@ SOFTWARE.
     #endif
 
     // these are default values
-    #define WARNING_VOLTAGE 108 // 3.6V per cell for 3S
-    #define CRITICAL_VOLTAGE 100 // 3.3V per cell for 3S
-    #define VBAT_SCALE 119
+    #define WARNING_VOLTAGE 70 // 3.5V per cell for 2S
+    #define CRITICAL_VOLTAGE 66 // 3.3V per cell for 2S
+    #define VBAT_SCALE 75
     #define VBAT_OFFSET 0
     // alarm sounds - by default every 5 seconds an alarm is turned on
     // for critical alarm its 3 long beeps
@@ -121,14 +126,23 @@ SOFTWARE.
     #define WARNING_BEEPS 2
 #endif
 
+#define sevenSegDigit1Pin 2
+#define sevenSegDigit2Pin 3
+
 // this two are minimum required
-#define buttonUp 2
-#define buttonMode 3
+#define buttonDown 5
+#define buttonMode 5
 // optional comfort buttons
-#define buttonDown 4
+#define buttonUp 5
 #define buttonSave 5
 // Buzzer
+#define PASSIVE_BUZZER // set if not using active buzzer
 #define buzzer 6
+
+#define VIDEO_SWITCH_TOGGLE 2000
+#define videoSwitchButton 8
+
+
 
 // key debounce delay in ms
 // NOTE: good values are in the range of 100-200ms
@@ -148,7 +162,6 @@ SOFTWARE.
 // scan loops for setup run
 #define RSSI_SETUP_RUN 3
 
-#define STATE_SEEK_FOUND 0
 #define STATE_SEEK 1
 #define STATE_SCAN 2
 #define STATE_MANUAL 3
@@ -160,6 +173,7 @@ SOFTWARE.
 #define STATE_RSSI_SETUP 7
 #define STATE_SCREEN_SAVER 8
 #define STATE_VOLTAGE 9
+#define STATE_MODE_MENU 10
 
 // Seconds to wait before force entering screensaver
 #define SCREENSAVER_TIMEOUT 30

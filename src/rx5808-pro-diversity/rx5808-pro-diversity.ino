@@ -40,8 +40,8 @@ SOFTWARE.
 // uncomment depending on the display you are using.
 // this is an issue with the arduino preprocessor
 #ifdef TVOUT_SCREENS
-//    #include <TVout.h>
-//    #include <fontALL.h>
+#include <TVout.h>
+#include <fontALL.h>
 #endif
 #ifdef OLED_128x64_ADAFRUIT_SCREENS
 
@@ -126,7 +126,6 @@ uint8_t state = START_STATE;
 uint8_t state_last_used=START_STATE;
 uint8_t last_state= START_STATE+1; // force screen draw
 uint8_t writePos = 0;
-uint8_t switch_count = 0;
 uint8_t man_channel = 0;
 uint8_t last_channel_index = 0;
 uint8_t force_seek=0;
@@ -177,6 +176,90 @@ char call_sign[10];
 bool settings_beeps = true;
 bool settings_orderby_channel = true;
 
+#ifdef PASSIVE_BUZZER
+boolean buzzer_on = false;
+boolean buzzer_pin_low = true;
+SIGNAL(TIMER0_COMPA_vect)
+{
+	if (buzzer_on)
+	{
+		// much faster than digitalWrite
+		PORTD ^= B01000000; // toggle buzzer pin(pin6)
+		/*
+		digitalWrite(buzzer, buzzer_pin_low ? HIGH : LOW);
+		buzzer_pin_low = !buzzer_pin_low;
+		*/
+	}
+}
+
+
+
+typedef enum
+{
+	BUTTON_STATE_NONE,
+	BUTTON_STATE_PRESS,
+	BUTTON_STATE_RELEASE,
+	BUTTON_STATE_CLICK,
+	BUTTON_STATE_LONG_CLICK,
+	BUTTON_STATE_VERY_LONG_CLICK,
+	BUTTON_STATE_DOUBLE_CLICK,
+	BUTTON_STATE_TRIPLE_CLICK,
+} ButtonState;
+
+#define KEY_DEBOUNCE    100
+#define LONG_CLICK      500
+#define VERY_LONG_CLICK 2000
+#define DOUBLE_CLICK    200
+
+typedef struct _Button
+{
+	int          pin;
+	ButtonState  state;
+	uint8_t      numClicks;
+	uint32_t     timePressMillis;
+	uint32_t     timeReleaseMillis;
+}Button;
+
+Button buttons[] = {
+	{4, 0, 0, 0, 0}, // button 1
+	{4, 0, 0, 0, 0}, // butotn 2
+};
+
+bool is_button_2 = false;
+
+bool checkButtonState(int buttonIndex, int state, boolean clear)
+{
+	if (buttons[buttonIndex].state == state)
+	{
+		// check handled
+		if (clear)
+			buttons[buttonIndex].state = BUTTON_STATE_NONE;
+		return true;
+	}
+	return false;
+}
+
+#define BUTTON1 0
+#define BUTTON2 1
+
+#define isPrevBtnClick() checkButtonState(BUTTON2, BUTTON_STATE_CLICK, true)
+#define isNextBtnClick() checkButtonState(BUTTON1, BUTTON_STATE_CLICK, true)
+#define isSelectBtnClick() checkButtonState(BUTTON1, BUTTON_STATE_LONG_CLICK, true)
+#define isCancelBtnClick() checkButtonState(BUTTON2, BUTTON_STATE_LONG_CLICK, true)
+
+#define peekPrevBtnClick() checkButtonState(BUTTON2, BUTTON_STATE_CLICK, false)
+#define peekNextBtnClick() checkButtonState(BUTTON1, BUTTON_STATE_CLICK, false)
+#define peekSelectClick() checkButtonState(BUTTON1, BUTTON_STATE_LONG_CLICK, false)
+#define peekCancelClick() checkButtonState(BUTTON2, BUTTON_STATE_LONG_CLICK, false)
+// fr short press = next chan, menu down
+// ch short press = prev chan, menu up
+// fr long press  = menu/ok/select
+// ch long press  = menu/cancel/exit
+
+
+
+#endif
+
 // SETUP ----------------------------------------------------------------------------
 void setup()
 {
@@ -186,17 +269,41 @@ void setup()
     digitalWrite(led, HIGH);
     // buzzer
     pinMode(buzzer, OUTPUT); // Feedback buzzer (active buzzer, not passive piezo)
+  
+#ifndef PASSIVE_BUZZER
     digitalWrite(buzzer, HIGH);
+#else
+  OCR0A = 0xAF;
+  TIMSK0 |= _BV(OCIE0A);
+  digitalWrite(buzzer, LOW);
+#endif
+#ifdef VIDEO_SWITCH_TOGGLE
+  pinMode(videoSwitchButton, OUTPUT);
+#endif
+
     // minimum control pins
+    /*
     pinMode(buttonUp, INPUT);
     digitalWrite(buttonUp, INPUT_PULLUP);
     pinMode(buttonMode, INPUT);
     digitalWrite(buttonMode, INPUT_PULLUP);
+    */
+ 	pinMode(sevenSegDigit2Pin, OUTPUT);
+    digitalWrite(sevenSegDigit2Pin, HIGH);
+    pinMode(sevenSegDigit1Pin, OUTPUT);
+    digitalWrite(sevenSegDigit1Pin, HIGH);
+
+    
+  
+  pinMode(4, INPUT);
+  digitalWrite(4, INPUT_PULLUP);
     // optional control
+    /*
     pinMode(buttonDown, INPUT);
     digitalWrite(buttonDown, INPUT_PULLUP);
     pinMode(buttonSave, INPUT);
     digitalWrite(buttonSave, INPUT_PULLUP);
+    */
     //Receiver Setup
     pinMode(receiverA_led,OUTPUT);
 #ifdef USE_DIVERSITY
@@ -204,10 +311,15 @@ void setup()
 #endif
     setReceiver(useReceiverA);
     // SPI pins for RX control
-    pinMode (slaveSelectPin, OUTPUT);
-    pinMode (spiDataPin, OUTPUT);
-	pinMode (spiClockPin, OUTPUT);
+    pinMode(slaveSelectPin, INPUT);
+    digitalWrite(slaveSelectPin, INPUT_PULLUP);
+    pinMode(spiDataPin, OUTPUT);
+	pinMode(spiClockPin, OUTPUT);
 
+	digitalWrite(slaveSelectPin, HIGH);
+  	digitalWrite(switchRegClockPin, LOW);
+  	digitalWrite(switchRegDataPin, LOW);
+  
     // use values only of EEprom is not 255 = unsaved
     uint8_t eeprom_check = EEPROM.read(EEPROM_ADR_STATE);
     if(eeprom_check == 255) // unused
@@ -281,6 +393,8 @@ void setup()
         // on Error flicker LED
         while (true) { // stay in ERROR for ever
             digitalWrite(led, !digitalRead(led));
+            digitalWrite(receiverA_led, digitalRead(led));
+            digitalWrite(receiverB_led, digitalRead(led));
             delay(100);
         }
     }
@@ -303,6 +417,8 @@ void setup()
 #endif
     // Setup Done - Turn Status LED off.
     digitalWrite(led, LOW);
+    //Serial.begin(57600);
+    //Serial.println(F("begin"));
 
 }
 
@@ -310,167 +426,440 @@ void setup()
 // LOOP ----------------------------------------------------------------------------
 void loop()
 {
-    /*******************/
-    /*   Mode Select   */
-    /*******************/
-    uint8_t in_menu;
-    uint8_t in_menu_time_out;
-
-    if (digitalRead(buttonMode) == LOW) // key pressed ?
-    {
-#ifdef USE_VOLTAGE_MONITORING
-        clear_alarm();
+#ifdef VIDEO_SWITCH_TOGGLE
+  uint32_t now = millis();
+  if (1000 + VIDEO_SWITCH_TOGGLE + 200 < now)
+    digitalWrite(videoSwitchButton, LOW);  
+  else if (1000 + VIDEO_SWITCH_TOGGLE < now)
+  {
+    digitalWrite(videoSwitchButton, HIGH);
+  }
+  else if (1000 + 200 < now)
+    digitalWrite(videoSwitchButton, LOW);
+  else if (1000 < now)
+  {
+  	digitalWrite(videoSwitchButton, HIGH);
+  }
+  
 #endif
-        time_screen_saver=0;
-        beep(50); // beep & debounce
-        delay(KEY_DEBOUNCE/2); // debounce
-        beep(50); // beep & debounce
-        delay(KEY_DEBOUNCE/2); // debounce
+	processButtons();
 
-        uint8_t press_time=0;
-        // on entry wait for release
-        while(digitalRead(buttonMode) == LOW && press_time < 10)
-        {
-            delay(100);
-            press_time++;
-        }
-        #define MAX_MENU 4
-        #define MENU_Y_SIZE 15
 
-        char menu_id=state_last_used-1;
-        // Show Mode Screen
-        if(state==STATE_SEEK_FOUND)
-        {
-            state=STATE_SEEK;
-        }
-        in_menu=1;
-        in_menu_time_out=50; // 20x 100ms = 5 seconds
-        /*
-        Enter Mode menu
-        Show current mode
-        Change mode by MODE key
-        Any Mode will refresh screen
-        If not MODE changes in 2 seconds, it uses last used mode
-        */
-        do
-        {
-            if(press_time >= 10) // if menu held for 1 second invoke quick save.
-            {
-                // user held the mode button and wants to quick save.
-                in_menu=0; // EXIT
-                state = STATE_SAVE;
-                break;
-            }
-            switch (menu_id)
-            {
-                case 0: // auto search
-                    state=STATE_SEEK;
-                    force_seek=1;
-                    seek_found=0;
-                break;
-                case 1: // Band Scanner
-                    state=STATE_SCAN;
-                    scan_start=1;
-                break;
-                case 2: // manual mode
-                    state=STATE_MANUAL;
-                break;
-            #ifdef USE_DIVERSITY
-                case 3: // Diversity
-                    if(isDiversity()) {
-                        state=STATE_DIVERSITY;
-                    }
-                    else {
-                        menu_id++;
-                        state=STATE_SETUP_MENU;
-                    }
-                break;
-            #else
-                case 3: // Skip
-                    menu_id++;
-            #endif
-                case 4: // Setup Menu
-                    state=STATE_SETUP_MENU;
-                break;
-            } // end switch
-
-            // draw mode select screen
-            drawScreen.mainMenu(menu_id);
-
-            while(digitalRead(buttonMode) == LOW || digitalRead(buttonUp) == LOW || digitalRead(buttonDown) == LOW)
-            {
-                // wait for MODE release
-                in_menu_time_out=50;
-            }
-            while(--in_menu_time_out && ((digitalRead(buttonMode) == HIGH) && (digitalRead(buttonUp) == HIGH) && (digitalRead(buttonDown) == HIGH))) // wait for next key press or time out
-            {
-                delay(100); // timeout delay
-            }
-            if(in_menu_time_out==0 || digitalRead(buttonMode) == LOW)
-            {
-                if(digitalRead(buttonMode) != LOW) {
-                    state=state_last_used; // exit to last state on timeout.
-                }
-                in_menu=0; // EXIT
-                beep(KEY_DEBOUNCE/2); // beep & debounce
-                delay(50); // debounce
-                beep(KEY_DEBOUNCE/2); // beep & debounce
-                delay(50); // debounce
-            }
-            else // no timeout, must be keypressed
-            {
-                /*********************/
-                /*   Menu handler   */
-                /*********************/
-                if(digitalRead(buttonUp) == LOW) {
-                    menu_id--;
-#ifdef USE_DIVERSITY
-                    if(!isDiversity() && menu_id == 3) { // make sure we back up two menu slots.
-                        menu_id--;
-                    }
-#else
-                    if(menu_id == 3) { // as we dont use diveristy make sure we back up two menu slots.
-                        menu_id--;
-                    }
-#endif
-                }
-                else if(digitalRead(buttonDown) == LOW) {
-                    menu_id++;
-                }
-
-                if (menu_id > MAX_MENU)
-                {
-                    menu_id = 0; // next state
-                }
-                if(menu_id < 0)
-                {
-                    menu_id = MAX_MENU;
-                }
-                in_menu_time_out=50;
-                beep(50); // beep & debounce
-                delay(KEY_DEBOUNCE); // debounce
-            }
-        } while(in_menu);
-        last_state=255; // force redraw of current screen
-        switch_count = 0;
-    }
-    else // key pressed
-    { // reset debounce
-        switch_count = 0;
-    }
     /***********************/
     /*     Save buttom     */
     /***********************/
     // hardware save buttom support (if no display is used)
+	/* FIXME
     if(digitalRead(buttonSave) == LOW)
     {
         state=STATE_SAVE;
     }
+	*/
+
+    /*************************************/
+    /*   Processing depending of state   */
+    /*************************************/
+
+	switch (state)
+	{
+		case STATE_MODE_MENU:
+			stateModeMenu();   // done
+			break;
+    	case STATE_DIVERSITY:
+			stateDiversity();  // done
+			break;
+		case STATE_MANUAL:
+		case STATE_SEEK:
+			stateManualSeek(); // done
+			break;
+		case STATE_SCAN:
+		case STATE_RSSI_SETUP:
+			stateScanMode();   // done
+		case STATE_SETUP_MENU:
+			stateSetupMenu();  // done
+			break;
+#ifdef USE_VOLTAGE_MONITORING
+		case STATE_VOLTAGE:
+			stateVoltageMonitoring(); // done
+			break;
+#endif
+#ifndef TVOUT_SCREENS
+		case STATE_SCREEN_SAVER:
+			stateScreenSaver();
+			break;
+#endif
+		default:
+			break;
+	}
+
+	updateScreen();
+
+
+    /*****************************/
+    /*   General house keeping   */
+    /*****************************/
+    if(last_channel_index != channelIndex)         // tune channel on demand
+    {
+        setChannelModule(channelIndex);
+        last_channel_index=channelIndex;
+        // keep time of tune to make sure that RSSI is stable when required
+        time_of_tune=millis();
+    }
+#ifdef USE_VOLTAGE_MONITORING
+    read_voltage();
+    voltage_alarm();
+#endif
+}
+/*###########################################################################*/
+/*******************/
+/*   SUB ROUTINES  */
+/*******************/
+
+#define SEVEN_SEG_0 B11111100
+#define SEVEN_SEG_1 B01100000
+#define SEVEN_SEG_2 B11011010
+#define SEVEN_SEG_3 B11110010
+#define SEVEN_SEG_4 B01100110
+#define SEVEN_SEG_5 B10110110
+#define SEVEN_SEG_6 B10111110
+#define SEVEN_SEG_7 B11100000
+#define SEVEN_SEG_8 B11111110
+#define SEVEN_SEG_9 B11110110
+#define SEVEN_SEG_A B11101110
+#define SEVEN_SEG_b B00111110
+#define SEVEN_SEG_C B10011100
+#define SEVEN_SEG_d B01111010
+#define SEVEN_SEG_E B10011110
+#define SEVEN_SEG_F B10001110
+
+#define SEG_A  B10000000
+#define SEG_B  B01000000
+#define SEG_C  B00100000
+#define SEG_D  B00010000
+#define SEG_E  B00001000
+#define SEG_F  B00000100
+#define SEG_G  B00000010
+#define SEG_DP B00000001
+
+#define SEG_ON LOW
+#define SEG_OFF HIGH
+
+void set7SegSymbol(uint8_t symbol)
+{
+#define CLOCK_IN  HIGH
+#define CLOCK_OUT LOW
+	
+	digitalWrite(switchRegClockPin, LOW);
+
+	digitalWrite(switchRegDataPin, (symbol & SEG_DP) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	
+	digitalWrite(switchRegDataPin, (symbol & SEG_G) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	digitalWrite(switchRegDataPin, (symbol & SEG_C) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	
+	digitalWrite(switchRegDataPin, (symbol & SEG_D) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	digitalWrite(switchRegDataPin, (symbol & SEG_E) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	digitalWrite(switchRegDataPin, (symbol & SEG_F) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	digitalWrite(switchRegDataPin, (symbol & SEG_B) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	digitalWrite(switchRegDataPin, (symbol & SEG_A) ? SEG_ON : SEG_OFF);
+	digitalWrite(switchRegClockPin, CLOCK_IN);
+	delayMicroseconds(10);
+	digitalWrite(switchRegClockPin, CLOCK_OUT);
+
+	digitalWrite(switchRegDataPin, LOW);
+	digitalWrite(switchRegClockPin, LOW);
+}
+
+uint8_t seven7SegHexSymbol[] = {SEVEN_SEG_0,SEVEN_SEG_1,SEVEN_SEG_2, SEVEN_SEG_3,SEVEN_SEG_4,SEVEN_SEG_5,
+                                SEVEN_SEG_6,SEVEN_SEG_7,SEVEN_SEG_8,SEVEN_SEG_9,SEVEN_SEG_A, SEVEN_SEG_b,
+                                SEVEN_SEG_C, SEVEN_SEG_d, SEVEN_SEG_E, SEVEN_SEG_F};
+void updateSevenSegDisplay()
+{
+	is_button_2 = !is_button_2;
+
+	delayMicroseconds(100);
+
+	if (is_button_2)
+	{
+		set7SegSymbol(seven7SegHexSymbol[((pgm_read_byte_near(channelNames + channelIndex)>>4))]);
+		digitalWrite(sevenSegDigit2Pin, HIGH);   // second digit off
+		digitalWrite(sevenSegDigit1Pin, LOW);  // first digit on
+	}
+	else
+	{
+		set7SegSymbol(seven7SegHexSymbol[(pgm_read_byte_near(channelNames + channelIndex)&0xF)]);
+		digitalWrite(sevenSegDigit1Pin, HIGH);   // first digit off
+		digitalWrite(sevenSegDigit2Pin, LOW);   // second digit on
+	}
+}
+
+void processButton(int buttonIndex)
+{		
+	switch( buttons[buttonIndex].state )
+	{
+		case BUTTON_STATE_NONE:
+			{
+				uint32_t timeNow = millis();
+				if (buttons[buttonIndex].timeReleaseMillis + KEY_DEBOUNCE < timeNow)
+				{
+					int val = digitalRead(buttons[buttonIndex].pin);
+					if (LOW == val)
+					{
+						buttons[buttonIndex].state = BUTTON_STATE_PRESS;
+						buttons[buttonIndex].timePressMillis = timeNow;
+						buttons[buttonIndex].numClicks = 1;
+					}
+				}
+			}
+			break;
+		case BUTTON_STATE_PRESS:
+			{
+				uint32_t timeNow = millis();
+				if (buttons[buttonIndex].timePressMillis + KEY_DEBOUNCE < timeNow)
+				{
+					int val = digitalRead(buttons[buttonIndex].pin);
+					if (HIGH == val)
+					{
+						buttons[buttonIndex].state = BUTTON_STATE_RELEASE;
+						buttons[buttonIndex].timeReleaseMillis = timeNow;
+					}
+				}
+				
+			}
+			break;
+		case BUTTON_STATE_RELEASE:
+			{
+				uint32_t timeNow = millis();
+				if (buttons[buttonIndex].timeReleaseMillis + KEY_DEBOUNCE < timeNow)
+				{
+					int val = digitalRead(buttons[buttonIndex].pin);
+					
+					uint32_t timeNow = millis();
+					if (LOW == val)
+					{
+						buttons[buttonIndex].numClicks++;
+						buttons[buttonIndex].state = BUTTON_STATE_PRESS;
+						buttons[buttonIndex].timePressMillis = timeNow;
+					}
+					else 
+					{
+						if (buttons[buttonIndex].numClicks == 1)
+						{
+							if (VERY_LONG_CLICK < buttons[buttonIndex].timeReleaseMillis - buttons[buttonIndex].timePressMillis)
+							{
+								buttons[buttonIndex].state = BUTTON_STATE_VERY_LONG_CLICK;
+							}
+							else if (LONG_CLICK < buttons[buttonIndex].timeReleaseMillis - buttons[buttonIndex].timePressMillis)
+							{
+								buttons[buttonIndex].state = BUTTON_STATE_LONG_CLICK;
+							}
+							else if (DOUBLE_CLICK < timeNow - buttons[buttonIndex].timePressMillis)
+							{
+								buttons[buttonIndex].state = BUTTON_STATE_CLICK;
+							}
+						}
+						else
+						{
+							if (buttons[buttonIndex].timePressMillis + DOUBLE_CLICK < timeNow)
+							{
+								if (buttons[buttonIndex].numClicks == 2)
+								{
+									buttons[buttonIndex].state = BUTTON_STATE_DOUBLE_CLICK;
+								}
+								else if (buttons[buttonIndex].numClicks >= 3)
+								{
+									buttons[buttonIndex].state = BUTTON_STATE_TRIPLE_CLICK;
+								}
+							}
+						}
+					}
+				}
+			}
+			break;
+		default:
+			buttons[buttonIndex].state = BUTTON_STATE_NONE;
+			buttons[buttonIndex].numClicks = 0;
+			break;
+	}
+}
+
+
+
+void processButtons()
+{
+	updateSevenSegDisplay();
+	
+	if (is_button_2)
+	{
+		processButton(BUTTON2);
+	}
+	else
+	{
+		processButton(BUTTON1);
+	}
+
+}
+
+void stateModeMenu()
+{
+	if (STATE_MODE_MENU != state)
+		return;
+
+    /*******************/
+    /*   Mode Select   */
+    /*******************/
+    static uint8_t  in_menu = 0;
+	static char menu_id=state_last_used-1;
+	uint32_t time_now = millis();
+	static uint32_t last_activity_time = 0;
+
+	if (in_menu == 0)
+	{
+		in_menu = 1;
+		time_screen_saver=0;
+		menu_id = state_last_used - 1;
+		last_activity_time = time_now;
+		
+		// draw mode select screen
+		drawScreen.mainMenu(menu_id);
+	}
+
+	#define MAX_MENU 4
+	#define MENU_Y_SIZE 15
+
+	// Show Mode Screen
+
+	/*
+	Enter Mode menu
+	Show current mode
+	Change mode by MODE key
+	Any Mode will refresh screen
+	If not MODE changes in 2 seconds, it uses last used mode
+	*/
+
+	char menu_id_old = menu_id;
+	
+	if(isSelectBtnClick())
+	{
+		last_activity_time = time_now;
+		in_menu=0; // EXIT
+		last_state=255; // force redraw of current screen
+
+		switch (menu_id)
+		{
+			case 0: // auto search
+				state=STATE_SEEK;
+				force_seek=1;
+				seek_found=0;
+			break;
+			case 1: // Band Scanner
+				state=STATE_SCAN;
+				scan_start=1;
+			break;
+			case 2: // manual mode
+				state=STATE_MANUAL;
+			break;
+		#ifdef USE_DIVERSITY
+			case 3: // Diversity
+				if(isDiversity()) {
+					state=STATE_DIVERSITY;
+				}
+				else {
+					menu_id++;
+					state=STATE_SETUP_MENU;
+				}
+			break;
+		#else
+			case 3: // Skip
+				menu_id++;
+		#endif
+			case 4: // Setup Menu
+				state=STATE_SETUP_MENU;
+			break;
+		} // end switch
+	}
+	else if (isCancelBtnClick())
+	{
+		state=state_last_used; // exit to last state on timeout.
+		in_menu = 0;
+		last_state=255; // force redraw of current screen
+	}
+	else if(isPrevBtnClick())
+	{
+		last_activity_time = time_now;
+		menu_id--;
+#ifdef USE_DIVERSITY
+		if(!isDiversity() && menu_id == 3) { // make sure we back up two menu slots.
+			menu_id--;
+		}
+#else
+		if(menu_id == 3) { // as we dont use diveristy make sure we back up two menu slots.
+			menu_id--;
+		}
+#endif
+	}
+	else if(isNextBtnClick())
+	{
+		last_activity_time = time_now;
+		menu_id++;
+	}
+	else if (time_now > last_activity_time+5000) // 8 second timeout on menu
+	{
+		state=state_last_used;
+		in_menu = 0;
+		last_state=255; // force redraw of current screen
+	}
+
+	if (menu_id > MAX_MENU)
+	{
+		menu_id = 0; // next state
+	}
+	if(menu_id < 0)
+	{
+		menu_id = MAX_MENU;
+	}
+	if (menu_id != menu_id_old)
+	{
+		drawScreen.mainMenu(menu_id);
+	}
+}
+
+void updateScreen()
+{
     /***************************************/
     /*   Draw screen if mode has changed   */
     /***************************************/
     if(force_menu_redraw || state != last_state)
     {
+    	//Serial.print("state change: ");
+    	//Serial.println(state);
         force_menu_redraw=0;
         /************************/
         /*   Main screen draw   */
@@ -576,292 +965,145 @@ void loop()
 
         last_state=state;
     }
-    /*************************************/
-    /*   Processing depending of state   */
-    /*************************************/
-#ifndef TVOUT_SCREENS
-    if(state == STATE_SCREEN_SAVER) {
-#ifdef USE_DIVERSITY
-        drawScreen.screenSaver(diversity_mode, pgm_read_byte_near(channelNames + channelIndex), pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
-#else
-        drawScreen.screenSaver(pgm_read_byte_near(channelNames + channelIndex), pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
-#endif
-#ifdef USE_VOLTAGE_MONITORING
-            read_voltage();
-            voltage_alarm();
-            drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
-#endif
-        do{
-            rssi = readRSSI();
+}
 
-#ifdef USE_DIVERSITY
-            drawScreen.updateScreenSaver(active_receiver, rssi, readRSSI(useReceiverA), readRSSI(useReceiverB));
-#else
-            drawScreen.updateScreenSaver(rssi);
-#endif
-
-#ifdef USE_VOLTAGE_MONITORING
-            read_voltage();
-            voltage_alarm();
-
-            drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
-#endif
-        }
-        while((digitalRead(buttonMode) == HIGH) && (digitalRead(buttonUp) == HIGH) && (digitalRead(buttonDown) == HIGH)); // wait for next button press
-        state=state_last_used;
-        time_screen_saver=0;
-        return;
-    }
-#endif
-#ifdef USE_VOLTAGE_MONITORING
-    if(state == STATE_VOLTAGE) {
-        // simple menu
-        char menu_id=0;
-        uint8_t in_voltage_menu=1;
-        int editing = -1;
-        do{
-            drawScreen.voltage(menu_id, vbat_scale, warning_voltage, critical_voltage);
-            do {
-                drawScreen.updateVoltage(voltage);
-                read_voltage();
-                voltage_alarm();
-                //delay(100); // timeout delay
-            }
-            while((digitalRead(buttonMode) == HIGH) && (digitalRead(buttonUp) == HIGH) && (digitalRead(buttonDown) == HIGH)); // wait for next key press
-
-            if(digitalRead(buttonMode) == LOW){
-                if(editing > -1){
-                    // user is done editing
-                    editing = -1;
-                }
-                else if(menu_id < 3)
-                {
-                    editing = menu_id;
-                }
-                else if(menu_id == 3)
-                {
-                    in_menu = 0; // save & exit menu
-                    in_voltage_menu = 0; // save & exit menu
-                    state=STATE_SAVE;
-                    editing = -1;
-                }
-            } else if(digitalRead(buttonDown) == LOW) {
-                switch (editing) {
-                    case 0:
-                        warning_voltage--;
-                        break;
-                    case 1:
-                        critical_voltage--;
-                        break;
-                    case 2:
-                        vbat_scale--;
-                        break;
-                    default:
-                        menu_id++;
-                        break;
-                }
-            }
-            else if(digitalRead(buttonUp) == LOW) {
-                switch (editing) {
-                    case 0:
-                        warning_voltage++;
-                        break;
-                    case 1:
-                        critical_voltage++;
-                        break;
-                    case 2:
-                        vbat_scale++;
-                        break;
-                    default:
-                        menu_id--;
-                        break;
-                }
-            }
-
-            if(menu_id > 3) {
-                menu_id = 0;
-            }
-            if(menu_id < 0) {
-                menu_id = 3;
-            }
-            beep(50); // beep & debounce
-            //delay(KEY_DEBOUNCE); // debounce
-            do{
-                delay(150);// wait for button release
-            }
-            while(editing==-1 && (digitalRead(buttonMode) == LOW || digitalRead(buttonUp) == LOW || digitalRead(buttonDown) == LOW));
-        }
-        while(in_voltage_menu);
-    }
-#endif
-
-#ifdef USE_DIVERSITY
-    if(state == STATE_DIVERSITY) {
-        // simple menu
-        char menu_id=diversity_mode;
-        uint8_t in_menu=1;
-        do{
-            diversity_mode = menu_id;
-            drawScreen.diversity(diversity_mode);
-            do
-            {
-                //delay(10); // timeout delay
-                readRSSI();
-                drawScreen.updateDiversity(active_receiver, readRSSI(useReceiverA), readRSSI(useReceiverB));
-            }
-            while((digitalRead(buttonMode) == HIGH) && (digitalRead(buttonUp) == HIGH) && (digitalRead(buttonDown) == HIGH)); // wait for next mode or time out
-
-            if(digitalRead(buttonMode) == LOW)        // channel UP
-            {
-                in_menu = 0; // exit menu
-            }
-            else if(digitalRead(buttonUp) == LOW) {
-                menu_id--;
-            }
-            else if(digitalRead(buttonDown) == LOW) {
-                menu_id++;
-            }
-
-            if(menu_id > useReceiverB) {
-                menu_id = 0;
-            }
-            if(menu_id < 0) {
-                menu_id = useReceiverB;
-            }
-            beep(50); // beep & debounce
-            delay(KEY_DEBOUNCE); // debounce
-        }
-        while(in_menu);
-
-        state=state_last_used;
-    }
-#endif
-    /*****************************************/
-    /*   Processing MANUAL MODE / SEEK MODE  */
-    /*****************************************/
-    if(state == STATE_MANUAL || state == STATE_SEEK)
+void stateSetupMenu()
+{
+    if(state == STATE_SETUP_MENU)
     {
-        // read rssi
-        wait_rssi_ready();
-        rssi = readRSSI();
-        rssi_best = (rssi > rssi_best) ? rssi : rssi_best;
+        // simple menu
+        static char menu_id=0;
+        static uint8_t in_menu=0;
+        static int editing = -1;
+		uint32_t time_now = millis();
+		static uint32_t last_activity_time = 0;
+		boolean redraw = false;
 
-        channel=channel_from_index(channelIndex); // get 0...48 index depending of current channel
-        if(state == STATE_MANUAL) // MANUAL MODE
-        {
-#ifdef USE_IR_EMITTER
-            if(time_next_payload+1000 < millis() && rssi <= 50) { // send channel info every second until rssi is locked.
-                sendIRPayload();
-                time_next_payload = millis();
-            }
+		if (in_menu == 0)
+		{
+			in_menu = 1;
+			menu_id = 0;
+			editing = -1;
+			last_activity_time = time_now;
+			drawScreen.setupMenu();
+			drawScreen.updateSetupMenu(menu_id, settings_beeps, settings_orderby_channel, call_sign, editing);
+		}
+
+		//
+
+		if (peekSelectClick() || peekCancelClick() || peekPrevBtnClick() || peekNextBtnClick())
+		{
+			redraw = true;
+			last_activity_time = time_now;
+		}
+
+		if(isSelectBtnClick())        // modeButton
+		{
+			// do something about the users selection
+			switch(menu_id) {
+				case 0: // Channel Order Channel/Frequency
+					settings_orderby_channel = !settings_orderby_channel;
+					break;
+				case 1:// Beeps enable/disable
+					settings_beeps = !settings_beeps;
+					break;
+				case 2:// Edit Call Sign
+					editing++;
+					if(editing>9) {
+						editing=-1;
+					}
+					break;
+				case 3:// Calibrate RSSI
+					in_menu = 0;
+					state=STATE_RSSI_SETUP;
+					break;
+#ifdef USE_VOLTAGE_MONITORING
+				case 4:// Change Voltage Settings
+					in_menu = 0;
+					state=STATE_VOLTAGE;
+					break;
+				case 5:
+#else
+				case 4:
 #endif
-            // handling of keys
-            if( digitalRead(buttonUp) == LOW)        // channel UP
-            {
-                time_screen_saver=millis();
-                beep(50); // beep & debounce
-                delay(KEY_DEBOUNCE); // debounce
-                channelIndex++;
-                channel++;
-                channel > CHANNEL_MAX ? channel = CHANNEL_MIN : false;
-                if (channelIndex > CHANNEL_MAX_INDEX)
-                {
-                    channelIndex = CHANNEL_MIN_INDEX;
-                }
-            }
-            if( digitalRead(buttonDown) == LOW) // channel DOWN
-            {
-                time_screen_saver=millis();
-                beep(50); // beep & debounce
-                delay(KEY_DEBOUNCE); // debounce
-                channelIndex--;
-                channel--;
-                channel < CHANNEL_MIN ? channel = CHANNEL_MAX : false;
-                if (channelIndex > CHANNEL_MAX_INDEX) // negative overflow
-                {
-                    channelIndex = CHANNEL_MAX_INDEX;
-                }
-            }
-
-            if(!settings_orderby_channel) { // order by frequency
-                channelIndex = pgm_read_byte_near(channelList + channel);
-            }
-
-        }
-
-        // handling for seek mode after screen and RSSI has been fully processed
-        if(state == STATE_SEEK) //
-        { // SEEK MODE
-
-            // recalculate rssi_seek_threshold
-            ((int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0)) > rssi_seek_threshold) ? (rssi_seek_threshold = (int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0))) : false;
-
-            if(!seek_found) // search if not found
-            {
-                if ((!force_seek) && (rssi > rssi_seek_threshold)) // check for found channel
-                {
-                    seek_found=1;
-                    time_screen_saver=millis();
-                    // beep twice as notice of lock
-                    beep(100);
-                    delay(100);
-                    beep(100);
-                }
-                else
-                { // seeking itself
-                    force_seek=0;
-                    // next channel
-                    channel+=seek_direction;
-                    if (channel > CHANNEL_MAX)
-                    {
-                        // calculate next pass new seek threshold
-                        rssi_seek_threshold = (int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0));
-                        channel=CHANNEL_MIN;
-                        rssi_best = 0;
-                    }
-                    else if(channel < CHANNEL_MIN)
-                    {
-                        // calculate next pass new seek threshold
-                        rssi_seek_threshold = (int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0));
-                        channel=CHANNEL_MAX;
-                        rssi_best = 0;
-                    }
-                    rssi_seek_threshold = rssi_seek_threshold < 5 ? 5 : rssi_seek_threshold; // make sure we are not stopping on everyting
-                    channelIndex = pgm_read_byte_near(channelList + channel);
-                }
-            }
-            else
-            { // seek was successful
-
-            }
-            if (digitalRead(buttonUp) == LOW || digitalRead(buttonDown) == LOW) // restart seek if key pressed
-            {
-                if(digitalRead(buttonUp) == LOW) {
-                    seek_direction = 1;
-                }
-                else {
-                    seek_direction = -1;
-                }
-                beep(50); // beep & debounce
-                delay(KEY_DEBOUNCE); // debounce
-                force_seek=1;
-                seek_found=0;
-                time_screen_saver=0;
-            }
-        }
-#ifndef TVOUT_SCREENS
-        // change to screensaver after lock and 5 seconds has passed.
-        if(time_screen_saver+5000 < millis() && time_screen_saver != 0 && rssi > 50 ||
-            (time_screen_saver != 0 && time_screen_saver + (SCREENSAVER_TIMEOUT*1000) < millis())) {
-            state = STATE_SCREEN_SAVER;
-        }
+					in_menu = 0; // save & exit menu
+					state=STATE_SAVE;
+					break;
+				default:
+					break;
+			}
+		}
+		else if (isCancelBtnClick())
+		{
+			if (editing != -1)
+			{
+				editing = -1;
+			}
+			else
+			{
+				state=STATE_MODE_MENU;
+				in_menu = 0;
+			}
+		}
+		else if(isPrevBtnClick())
+		{
+			if(editing == -1) {
+				menu_id--;
+#ifdef TVOUT_SCREENS
+				// skip 2 (no call sign on tv out)
+				if(menu_id == 2) {
+					menu_id--;
+				}
 #endif
-        drawScreen.updateSeekMode(state, channelIndex, channel, rssi, pgm_read_word_near(channelFreqTable + channelIndex), rssi_seek_threshold, seek_found);
+			}
+			else { // change current letter in place
+				call_sign[editing]++;
+				call_sign[editing] > '}' ? call_sign[editing] = ' ' : false; // loop to oter end
+			}
+
+		}
+		else if(isNextBtnClick())
+		{
+			if(editing == -1) {
+				menu_id++;
+
+#ifdef TVOUT_SCREENS
+				// skip 2 (no call sign on tv out)
+				if(menu_id == 2) {
+					menu_id++;
+				}
+#endif
+			}
+			else { // change current letter in place
+				call_sign[editing]--;
+				call_sign[editing] < ' ' ? call_sign[editing] = '}' : false; // loop to oter end
+			}
+		}
+		else if (time_now > last_activity_time+8000) // 8 second timeout on menu
+		{
+			state=STATE_MODE_MENU;
+			in_menu = 0;
+		}
+
+		if(menu_id > SETUP_MENU_MAX_ITEMS) {
+			menu_id = 0;
+		}
+		if(menu_id < 0) {
+			menu_id = SETUP_MENU_MAX_ITEMS;
+		}
+		if (redraw)
+		{
+			drawScreen.updateSetupMenu(menu_id, settings_beeps, settings_orderby_channel, call_sign, editing);
+		}
     }
+}
+
+void stateScanMode()
+{
     /****************************/
     /*   Processing SCAN MODE   */
     /****************************/
-    else if (state == STATE_SCAN || state == STATE_RSSI_SETUP)
+    if (state == STATE_SCAN || state == STATE_RSSI_SETUP)
     {
         // force tune on new scan start to get right RSSI value
         if(scan_start)
@@ -938,170 +1180,357 @@ void loop()
             }
         }
         // new scan possible by press scan
-        if (digitalRead(buttonUp) == LOW) // force new full new scan
+        if (isPrevBtnClick() || isNextBtnClick()) // force new full new scan
         {
-            beep(50); // beep & debounce
-            delay(KEY_DEBOUNCE); // debounce
             last_state=255; // force redraw by fake state change ;-)
             channel=CHANNEL_MIN;
             scan_start=1;
             rssi_best=0;
         }
+        else if (isSelectBtnClick() || isCancelBtnClick())
+        {
+            state=STATE_MODE_MENU; // enter menu
+        }
         // update index after channel change
         channelIndex = pgm_read_byte_near(channelList + channel);
     }
-
-
-    if(state == STATE_SETUP_MENU)
-    {
-        // simple menu
-        char menu_id=0;
-        in_menu=1;
-        drawScreen.setupMenu();
-        int editing = -1;
-        do{
-            in_menu_time_out=80;
-            drawScreen.updateSetupMenu(menu_id, settings_beeps, settings_orderby_channel, call_sign, editing);
-            while(--in_menu_time_out && ((digitalRead(buttonMode) == HIGH) && (digitalRead(buttonUp) == HIGH) && (digitalRead(buttonDown) == HIGH))) // wait for next key press or time out
-            {
-                delay(100); // timeout delay
-            }
-
-            if(in_menu_time_out <= 0 ) {
-                state = state_last_used;
-                break; // Timed out, Don't save...
-            }
-
-            if(digitalRead(buttonMode) == LOW)        // modeButton
-            {
-                // do something about the users selection
-                switch(menu_id) {
-                    case 0: // Channel Order Channel/Frequency
-                        settings_orderby_channel = !settings_orderby_channel;
-                        break;
-                    case 1:// Beeps enable/disable
-                        settings_beeps = !settings_beeps;
-                        break;
-
-                    case 2:// Edit Call Sign
-                        editing++;
-                        if(editing>9) {
-                            editing=-1;
-                        }
-                        break;
-                    case 3:// Calibrate RSSI
-                        in_menu = 0;
-                        for (uint8_t loop=0;loop<10;loop++)
-                        {
-                            #define RSSI_SETUP_BEEP 25
-                            beep(RSSI_SETUP_BEEP); // beep & debounce
-                            delay(RSSI_SETUP_BEEP); // debounce
-                        }
-                        state=STATE_RSSI_SETUP;
-                        break;
-#ifdef USE_VOLTAGE_MONITORING
-                    case 4:// Change Voltage Settings
-                        in_menu = 0;
-                        state=STATE_VOLTAGE;
-                        break;
-                    case 5:
-#else
-                    case 4:
-#endif
-                        in_menu = 0; // save & exit menu
-                        state=STATE_SAVE;
-                        break;
-
-                }
-            }
-            else if(digitalRead(buttonUp) == LOW) {
-                if(editing == -1) {
-                    menu_id--;
-#ifdef TVOUT_SCREENS
-                    if(menu_id == 2) {
-                        menu_id--;
-                    }
-#endif
-                }
-                else { // change current letter in place
-                    call_sign[editing]++;
-                    call_sign[editing] > '}' ? call_sign[editing] = ' ' : false; // loop to oter end
-                }
-
-            }
-            else if(digitalRead(buttonDown) == LOW) {
-                if(editing == -1) {
-                    menu_id++;
-
-#ifdef TVOUT_SCREENS
-                    if(menu_id == 2) {
-                        menu_id++;
-                    }
-#endif
-                }
-                else { // change current letter in place
-                    call_sign[editing]--;
-                    call_sign[editing] < ' ' ? call_sign[editing] = '}' : false; // loop to oter end
-                }
-            }
-
-            if(menu_id > SETUP_MENU_MAX_ITEMS) {
-                menu_id = 0;
-            }
-            if(menu_id < 0) {
-                menu_id = SETUP_MENU_MAX_ITEMS;
-            }
-
-            beep(50); // beep & debounce
-            do{
-                delay(150);// wait for button release
-            }
-            while(editing==-1 && (digitalRead(buttonMode) == LOW || digitalRead(buttonUp) == LOW || digitalRead(buttonDown) == LOW));
-        }
-        while(in_menu);
-    }
-
-    /*****************************/
-    /*   General house keeping   */
-    /*****************************/
-    if(last_channel_index != channelIndex)         // tune channel on demand
-    {
-        setChannelModule(channelIndex);
-        last_channel_index=channelIndex;
-        // keep time of tune to make sure that RSSI is stable when required
-        time_of_tune=millis();
-        // give 3 beeps when tuned to give feedback of correct start
-        if(first_tune)
-        {
-            first_tune=0;
-            #define UP_BEEP 100
-            beep(UP_BEEP);
-            delay(UP_BEEP);
-            beep(UP_BEEP);
-            delay(UP_BEEP);
-            beep(UP_BEEP);
-        }
-    }
-#ifdef USE_VOLTAGE_MONITORING
-    read_voltage();
-    voltage_alarm();
-#endif
 }
 
-/*###########################################################################*/
-/*******************/
-/*   SUB ROUTINES  */
-/*******************/
+void stateManualSeek()
+{
+    /*****************************************/
+    /*   Processing MANUAL MODE / SEEK MODE  */
+    /*****************************************/
+    if(state == STATE_MANUAL || state == STATE_SEEK)
+    {
+        // read rssi
+        wait_rssi_ready();
+        rssi = readRSSI();
+        rssi_best = (rssi > rssi_best) ? rssi : rssi_best;
+
+        channel=channel_from_index(channelIndex); // get 0...48 index depending of current channel
+        if(state == STATE_MANUAL) // MANUAL MODE
+        {
+#ifdef USE_IR_EMITTER
+            if(time_next_payload+1000 < millis() && rssi <= 50) { // send channel info every second until rssi is locked.
+                sendIRPayload();
+                time_next_payload = millis();
+            }
+#endif
+            // handling of keys
+            if(isNextBtnClick())        // channel UP
+            {
+                time_screen_saver=millis();
+
+                channelIndex++;
+                channel++;
+                channel > CHANNEL_MAX ? channel = CHANNEL_MIN : false;
+                if (channelIndex > CHANNEL_MAX_INDEX)
+                {
+                    channelIndex = CHANNEL_MIN_INDEX;
+                }
+            }
+            else if(isPrevBtnClick()) // channel DOWN
+            {
+                time_screen_saver=millis();
+
+                channelIndex--;
+                channel--;
+                channel < CHANNEL_MIN ? channel = CHANNEL_MAX : false;
+                if (channelIndex > CHANNEL_MAX_INDEX) // negative overflow
+                {
+                    channelIndex = CHANNEL_MAX_INDEX;
+                }
+            }
+            else if (isSelectBtnClick() || isCancelBtnClick())
+			{
+				state=STATE_MODE_MENU;
+			}
+
+            if(!settings_orderby_channel) { // order by frequency
+                channelIndex = pgm_read_byte_near(channelList + channel);
+            }
+            else
+            {
+            	channel=channel_from_index(channelIndex);
+            }
+
+        }
+
+        // handling for seek mode after screen and RSSI has been fully processed
+        else if(state == STATE_SEEK) //
+        { // SEEK MODE
+
+            // recalculate rssi_seek_threshold
+            ((int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0)) > rssi_seek_threshold) ? (rssi_seek_threshold = (int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0))) : false;
+
+            if(!seek_found) // search if not found
+            {
+                if ((!force_seek) && (rssi > rssi_seek_threshold)) // check for found channel
+                {
+                    seek_found=1;
+                    time_screen_saver=millis();
+                }
+                else
+                { // seeking itself
+                    force_seek=0;
+                    // next channel
+                    channel+=seek_direction;
+                    if (channel > CHANNEL_MAX)
+                    {
+                        // calculate next pass new seek threshold
+                        rssi_seek_threshold = (int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0));
+                        channel=CHANNEL_MIN;
+                        rssi_best = 0;
+                    }
+                    else if(channel < CHANNEL_MIN)
+                    {
+                        // calculate next pass new seek threshold
+                        rssi_seek_threshold = (int)((float)rssi_best * (float)(RSSI_SEEK_TRESHOLD/100.0));
+                        channel=CHANNEL_MAX;
+                        rssi_best = 0;
+                    }
+                    rssi_seek_threshold = rssi_seek_threshold < 5 ? 5 : rssi_seek_threshold; // make sure we are not stopping on everyting
+                    channelIndex = pgm_read_byte_near(channelList + channel);
+                }
+            }
+            else
+            { // seek was successful
+
+            }
+            if (peekPrevBtnClick() || peekNextBtnClick())// restart seek if key pressed
+            {
+                if(isNextBtnClick()) {
+                    seek_direction = 1;
+                }
+                else if (isPrevBtnClick()){
+                    seek_direction = -1;
+                }
+                force_seek=1;
+                seek_found=0;
+                time_screen_saver=0;
+            }
+			else if (isSelectBtnClick() || isCancelBtnClick())
+			{
+				state=STATE_MODE_MENU;
+			}
+        }
+#ifndef TVOUT_SCREENS
+        // change to screensaver after lock and 5 seconds has passed.
+        if(time_screen_saver+5000 < millis() && time_screen_saver != 0 && rssi > 50 ||
+            (time_screen_saver != 0 && time_screen_saver + (SCREENSAVER_TIMEOUT*1000) < millis())) {
+            state = STATE_SCREEN_SAVER;
+        }
+#endif
+        drawScreen.updateSeekMode(state, channelIndex, channel, rssi, pgm_read_word_near(channelFreqTable + channelIndex), rssi_seek_threshold, seek_found, voltage);
+    }
+}
+
+void stateDiversity()
+{
+#ifdef USE_DIVERSITY
+    if(state == STATE_DIVERSITY) {
+        // simple menu
+        static uint8_t in_menu=0;
+		static int8_t menu_id=diversity_mode;
+
+		if (0 == in_menu)
+		{
+			in_menu = 1;
+			menu_id=diversity_mode;
+			drawScreen.diversity(diversity_mode);
+		}
+
+		//delay(10); // timeout delay
+		readRSSI();
+		drawScreen.updateDiversity(active_receiver, readRSSI(useReceiverA), readRSSI(useReceiverB));
+
+		if(isSelectBtnClick() || isCancelBtnClick())        // channel UP
+		{
+			in_menu = 0; // exit menu
+			state=STATE_MODE_MENU;
+		}
+		else if(peekPrevBtnClick() || peekNextBtnClick()) 
+		{
+			if (isPrevBtnClick())
+				menu_id--;
+			else if (isNextBtnClick())
+				menu_id++;
+	
+			if(menu_id > useReceiverB) {
+				menu_id = 0;
+			}
+			if(menu_id < 0) {
+				menu_id = useReceiverB;
+			}
+
+			diversity_mode = menu_id;
+			drawScreen.diversity(diversity_mode);
+		}
+    }
+#endif
+}
+#ifdef USE_VOLTAGE_MONITORING
+void stateVoltageMonitoring()
+{
+    if(state == STATE_VOLTAGE) {
+        // simple menu
+        static char menu_id=0;
+        static int editing = -1;
+        static uint8_t in_menu = 0;
+
+        if (in_menu == 0)
+        {
+        	in_menu = 1;
+        	editing = -1;
+        	menu_id = 0;
+        	drawScreen.voltage(menu_id, vbat_scale, warning_voltage, critical_voltage);
+        }
+        char last_menu_id = menu_id;
+       	int vbat_scale_old = vbat_scale;
+		uint8_t warning_voltage_old = warning_voltage; 
+		uint8_t critical_voltage_old = critical_voltage; 
+		
+        drawScreen.updateVoltage(voltage);
+
+        if(isSelectBtnClick()){
+            if(editing > -1){
+                // user is done editing
+                editing = -1;
+            }
+            else if(menu_id < 3)
+            {
+                editing = menu_id;
+            }
+            else if(menu_id == 3)
+            {
+                in_menu = 0; // save & exit menu
+                state=STATE_SAVE;
+            }
+        }
+        else if (isCancelBtnClick())
+        {
+        	if(editing > -1){
+                // user is done editing
+                editing = -1;
+            }
+            else
+            {
+                in_menu = 0; // cancel & exit menu
+                state=STATE_SETUP_MENU;
+				// restore original values
+				vbat_scale = EEPROM.read(EEPROM_ADR_VBAT_SCALE);
+				warning_voltage = EEPROM.read(EEPROM_ADR_VBAT_WARNING);
+				critical_voltage = EEPROM.read(EEPROM_ADR_VBAT_CRITICAL);
+            }
+        }
+        else if(isNextBtnClick()) {
+            switch (editing) {
+                case 0:
+                    warning_voltage++;
+                    break;
+                case 1:
+                    critical_voltage++;
+                    break;
+                case 2:
+                    vbat_scale++;
+                    break;
+                default:
+                    menu_id++;
+                    break;
+            }
+        }
+        else if(isPrevBtnClick()) {
+            switch (editing) {
+                case 0:
+                    warning_voltage--;
+                    break;
+                case 1:
+                    critical_voltage--;
+                    break;
+                case 2:
+                    vbat_scale--;
+                    break;
+                default:
+                    menu_id--;
+                    break;
+            }
+        }
+
+        if(menu_id > 3) {
+            menu_id = 0;
+        }
+        if(menu_id < 0) {
+            menu_id = 3;
+        }
+        if (last_menu_id != menu_id || vbat_scale != vbat_scale_old ||
+			warning_voltage != warning_voltage_old || 
+			critical_voltage != critical_voltage_old)
+        {
+        	drawScreen.voltage(menu_id, vbat_scale, warning_voltage, critical_voltage);
+        }
+    }
+}
+#endif
+
+
+void stateScreenSaver()
+{
+#ifndef TVOUT_SCREENS
+    if(state == STATE_SCREEN_SAVER) {
+#ifdef USE_DIVERSITY
+        drawScreen.screenSaver(diversity_mode, pgm_read_byte_near(channelNames + channelIndex), pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
+#else
+        drawScreen.screenSaver(pgm_read_byte_near(channelNames + channelIndex), pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
+#endif
+#ifdef USE_VOLTAGE_MONITORING
+            read_voltage();
+            voltage_alarm();
+            drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
+#endif
+        do{
+            rssi = readRSSI();
+
+#ifdef USE_DIVERSITY
+            drawScreen.updateScreenSaver(active_receiver, rssi, readRSSI(useReceiverA), readRSSI(useReceiverB));
+#else
+            drawScreen.updateScreenSaver(rssi);
+#endif
+
+#ifdef USE_VOLTAGE_MONITORING
+            read_voltage();
+            voltage_alarm();
+
+            drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
+#endif
+			processButtons();
+        }
+        while(!peekSelectClick() && !peekPrevBtnClick() && !peekNextBtnClick()); // wait for next button press
+        state=state_last_used;
+        time_screen_saver=0;
+        return;
+    }
+#endif
+}
 
 void beep(uint16_t time)
 {
     digitalWrite(led, HIGH);
     if(settings_beeps){
+#ifndef PASSIVE_BUZZER
         digitalWrite(buzzer, LOW); // activate beep
+#else
+	  buzzer_on = true;
+#endif
     }
     delay(time/2);
     digitalWrite(led, LOW);
+#ifndef PASSIVE_BUZZER
     digitalWrite(buzzer, HIGH);
+#else
+  buzzer_on = false;
+  digitalWrite(buzzer, LOW); // deactivate 
+#endif
 }
 
 uint8_t channel_from_index(uint8_t channelIndex)
@@ -1291,10 +1720,9 @@ void setChannelModule(uint8_t channel)
   // bit bash out 25 bits of data
   // Order: A0-3, !R/W, D0-D19
   // A0=0, A1=0, A2=0, A3=1, RW=0, D0-19=0
-  SERIAL_ENABLE_HIGH();
-  delayMicroseconds(1);
-  //delay(2);
-  SERIAL_ENABLE_LOW();
+  //digitalWrite(slaveSelectPin, LOW);
+  pinMode(slaveSelectPin, OUTPUT);
+  digitalWrite(slaveSelectPin, LOW);
 
   SERIAL_SENDBIT0();
   SERIAL_SENDBIT0();
@@ -1307,17 +1735,9 @@ void setChannelModule(uint8_t channel)
   for (i = 20; i > 0; i--)
     SERIAL_SENDBIT0();
 
-  // Clock the data in
-  SERIAL_ENABLE_HIGH();
-  //delay(2);
-  delayMicroseconds(1);
-  SERIAL_ENABLE_LOW();
-
   // Second is the channel data from the lookup table
   // 20 bytes of register data are sent, but the MSB 4 bits are zeros
   // register address = 0x1, write, data0-15=channelData data15-19=0x0
-  SERIAL_ENABLE_HIGH();
-  SERIAL_ENABLE_LOW();
 
   // Register 0x1
   SERIAL_SENDBIT1();
@@ -1351,11 +1771,10 @@ void setChannelModule(uint8_t channel)
     SERIAL_SENDBIT0();
 
   // Finished clocking data in
-  SERIAL_ENABLE_HIGH();
-  delayMicroseconds(1);
-  //delay(2);
+  pinMode(slaveSelectPin, INPUT);
+  digitalWrite(slaveSelectPin, INPUT_PULLUP);
+  digitalWrite(slaveSelectPin, HIGH);
 
-  digitalWrite(slaveSelectPin, LOW);
   digitalWrite(spiClockPin, LOW);
   digitalWrite(spiDataPin, LOW);
 }
@@ -1388,21 +1807,6 @@ void SERIAL_SENDBIT0()
   digitalWrite(spiClockPin, LOW);
   delayMicroseconds(1);
 }
-
-void SERIAL_ENABLE_LOW()
-{
-  delayMicroseconds(1);
-  digitalWrite(slaveSelectPin, LOW);
-  delayMicroseconds(1);
-}
-
-void SERIAL_ENABLE_HIGH()
-{
-  delayMicroseconds(1);
-  digitalWrite(slaveSelectPin, HIGH);
-  delayMicroseconds(1);
-}
-
 
 #ifdef USE_VOLTAGE_MONITORING
 void read_voltage()
@@ -1469,8 +1873,18 @@ void clear_alarm(){
     set_buzzer(false);
     beep_times = 0;
 }
+
 void set_buzzer(boolean value){
     digitalWrite(led, value);
+#ifndef PASSIVE_BUZZER
     digitalWrite(buzzer, !value);
+#else
+  if (value != buzzer_on)
+  {
+  	buzzer_on = value;
+    if (!buzzer_on)
+      digitalWrite(buzzer, LOW); // deactivate 
+  }
+#endif
 }
 #endif
