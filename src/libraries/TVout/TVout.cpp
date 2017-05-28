@@ -820,7 +820,7 @@ void TVout::tone(unsigned int frequency, unsigned long duration_ms) {
 
 	if (frequency == 0)
 		return;
-
+/*
 #define TIMER 2
 	//this is init code
 	TCCR2A = 0;
@@ -879,11 +879,12 @@ void TVout::tone(unsigned int frequency, unsigned long duration_ms) {
     //set it to toggle the pin by itself
     TCCR2A &= ~(_BV(COM2A1)); //set COM2A1 to 0
     TCCR2A |= _BV(COM2A0);
+*/
 } // end of tone
 
 /* Stops tone generation
  */
 void TVout::noTone() {
-	TCCR2B = 0;
-	PORT_SND &= ~(_BV(SND_PIN)); //set pin 11 to 0
+	//TCCR2B = 0;
+	//PORT_SND &= ~(_BV(SND_PIN)); //set pin 11 to 0
 } // end of noTone

@@ -91,7 +91,7 @@ void render_setup(uint8_t mode, uint8_t x, uint8_t y, uint8_t *scrnptr) {
 	DDR_SYNC |= _BV(SYNC_PIN);
 	PORT_VID &= ~_BV(VID_PIN);
 	PORT_SYNC |= _BV(SYNC_PIN);
-	DDR_SND |= _BV(SND_PIN);	// for tone generation.
+	//DDR_SND |= _BV(SND_PIN);	// for tone generation.
 
     // vertical syn is not critical from timing
     // to have flexibilty in pin and IRQ usage,
@@ -251,8 +251,8 @@ void vsync_line() {
 
 		} else
 		{
-			TCCR2B = 0; //stop the tone
- 			PORTB &= ~(_BV(SND_PIN));
+			//TCCR2B = 0; //stop the tone
+ 			//PORTB &= ~(_BV(SND_PIN));
 		}
 
 	}
