@@ -8,6 +8,7 @@
  * Diversity Receiver Mode and GUI improvements by Shea Ivey
  * OLED Version by Shea Ivey
  * Seperating display concerns by Shea Ivey
+ * Eachine VR D2 support by Mike Morrison
 
 The MIT License (MIT)
 
@@ -221,8 +222,8 @@ typedef struct _Button
 }Button;
 
 Button buttons[] = {
-	{4, 0, 0, 0, 0}, // button 1
-	{4, 0, 0, 0, 0}, // butotn 2
+	{eachineVRD2ButtonPin, 0, 0, 0, 0}, // button 1
+	{eachineVRD2ButtonPin, 0, 0, 0, 0}, // butotn 2
 };
 
 bool is_button_2 = false;
@@ -273,9 +274,9 @@ void setup()
 #ifndef PASSIVE_BUZZER
     digitalWrite(buzzer, HIGH);
 #else
-  OCR0A = 0xAF;
-  TIMSK0 |= _BV(OCIE0A);
-  digitalWrite(buzzer, LOW);
+    OCR0A = 0xAF;
+    TIMSK0 |= _BV(OCIE0A);
+    digitalWrite(buzzer, LOW);
 #endif
 #ifdef VIDEO_SWITCH_TOGGLE
   pinMode(videoSwitchButton, OUTPUT);
@@ -295,8 +296,8 @@ void setup()
 
     
   
-  pinMode(4, INPUT);
-  digitalWrite(4, INPUT_PULLUP);
+	pinMode(eachineVRD2ButtonPin , INPUT);
+	digitalWrite(eachineVRD2ButtonPin, INPUT_PULLUP);
     // optional control
     /*
     pinMode(buttonDown, INPUT);
@@ -311,8 +312,7 @@ void setup()
 #endif
     setReceiver(useReceiverA);
     // SPI pins for RX control
-    pinMode(slaveSelectPin, INPUT);
-    digitalWrite(slaveSelectPin, INPUT_PULLUP);
+    pinMode(slaveSelectPin, OUTPUT);
     pinMode(spiDataPin, OUTPUT);
 	pinMode(spiClockPin, OUTPUT);
 
@@ -442,7 +442,7 @@ void loop()
   }
   
 #endif
-	processButtons();
+	processButtons(false);
 
 
     /***********************/
@@ -548,49 +548,40 @@ void set7SegSymbol(uint8_t symbol)
 {
 #define CLOCK_IN  HIGH
 #define CLOCK_OUT LOW
-	
 	digitalWrite(switchRegClockPin, LOW);
-
+	
 	digitalWrite(switchRegDataPin, (symbol & SEG_DP) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	
 	digitalWrite(switchRegDataPin, (symbol & SEG_G) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	digitalWrite(switchRegDataPin, (symbol & SEG_C) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	
 	digitalWrite(switchRegDataPin, (symbol & SEG_D) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	digitalWrite(switchRegDataPin, (symbol & SEG_E) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	digitalWrite(switchRegDataPin, (symbol & SEG_F) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	digitalWrite(switchRegDataPin, (symbol & SEG_B) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	digitalWrite(switchRegDataPin, (symbol & SEG_A) ? SEG_ON : SEG_OFF);
 	digitalWrite(switchRegClockPin, CLOCK_IN);
-	delayMicroseconds(10);
 	digitalWrite(switchRegClockPin, CLOCK_OUT);
 
 	digitalWrite(switchRegDataPin, LOW);
@@ -604,23 +595,21 @@ void updateSevenSegDisplay()
 {
 	is_button_2 = !is_button_2;
 
-	delayMicroseconds(100);
-
 	if (is_button_2)
 	{
-		set7SegSymbol(seven7SegHexSymbol[((pgm_read_byte_near(channelNames + channelIndex)>>4))]);
 		digitalWrite(sevenSegDigit2Pin, HIGH);   // second digit off
+		set7SegSymbol(seven7SegHexSymbol[((pgm_read_byte_near(channelNames + channelIndex)>>4))]);
 		digitalWrite(sevenSegDigit1Pin, LOW);  // first digit on
 	}
 	else
 	{
-		set7SegSymbol(seven7SegHexSymbol[(pgm_read_byte_near(channelNames + channelIndex)&0xF)]);
 		digitalWrite(sevenSegDigit1Pin, HIGH);   // first digit off
+		set7SegSymbol(seven7SegHexSymbol[(pgm_read_byte_near(channelNames + channelIndex)&0xF)]);
 		digitalWrite(sevenSegDigit2Pin, LOW);   // second digit on
 	}
 }
 
-void processButton(int buttonIndex)
+void processButton(int buttonIndex, boolean handleMultiClicks)
 {		
 	switch( buttons[buttonIndex].state )
 	{
@@ -662,7 +651,7 @@ void processButton(int buttonIndex)
 					int val = digitalRead(buttons[buttonIndex].pin);
 					
 					uint32_t timeNow = millis();
-					if (LOW == val)
+					if (LOW == val && handleMultiClicks)
 					{
 						buttons[buttonIndex].numClicks++;
 						buttons[buttonIndex].state = BUTTON_STATE_PRESS;
@@ -712,17 +701,17 @@ void processButton(int buttonIndex)
 
 
 
-void processButtons()
+void processButtons(boolean handleMultiClicks)
 {
 	updateSevenSegDisplay();
 	
 	if (is_button_2)
 	{
-		processButton(BUTTON2);
+		processButton(BUTTON2, handleMultiClicks);
 	}
 	else
 	{
-		processButton(BUTTON1);
+		processButton(BUTTON1, handleMultiClicks);
 	}
 
 }
@@ -950,12 +939,7 @@ void updateScreen()
                 EEPROM.write(EEPROM_ADR_VBAT_CRITICAL, critical_voltage);
 #endif
                 drawScreen.save(state_last_used, channelIndex, pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
-                for (uint8_t loop=0;loop<5;loop++)
-                {
-                    beep(100); // beep
-                    delay(100);
-                }
-                delay(3000);
+                delay(4000);
                 state=state_last_used; // return to saved function
                 force_menu_redraw=1; // we change the state twice, must force redraw of menu
 
@@ -1503,7 +1487,7 @@ void stateScreenSaver()
 
             drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
 #endif
-			processButtons();
+			processButtons(false);
         }
         while(!peekSelectClick() && !peekPrevBtnClick() && !peekNextBtnClick()); // wait for next button press
         state=state_last_used;
@@ -1576,10 +1560,10 @@ uint16_t readRSSI(char receiver)
 #endif
     for (uint8_t i = 0; i < RSSI_READS; i++)
     {
-        rssiA += analogRead(rssiPinA);//random(RSSI_MAX_VAL-200, RSSI_MAX_VAL);//
+        rssiA += analogReadAccurately(rssiPinA);//random(RSSI_MAX_VAL-200, RSSI_MAX_VAL);//
 
 #ifdef USE_DIVERSITY
-        rssiB += analogRead(rssiPinB);//random(RSSI_MAX_VAL-200, RSSI_MAX_VAL);//
+        rssiB += analogReadAccurately(rssiPinB);//random(RSSI_MAX_VAL-200, RSSI_MAX_VAL);//
 #endif
     }
     rssiA = rssiA/RSSI_READS; // average of RSSI_READS readings
@@ -1720,8 +1704,6 @@ void setChannelModule(uint8_t channel)
   // bit bash out 25 bits of data
   // Order: A0-3, !R/W, D0-D19
   // A0=0, A1=0, A2=0, A3=1, RW=0, D0-19=0
-  //digitalWrite(slaveSelectPin, LOW);
-  pinMode(slaveSelectPin, OUTPUT);
   digitalWrite(slaveSelectPin, LOW);
 
   SERIAL_SENDBIT0();
@@ -1771,10 +1753,7 @@ void setChannelModule(uint8_t channel)
     SERIAL_SENDBIT0();
 
   // Finished clocking data in
-  pinMode(slaveSelectPin, INPUT);
-  digitalWrite(slaveSelectPin, INPUT_PULLUP);
   digitalWrite(slaveSelectPin, HIGH);
-
   digitalWrite(spiClockPin, LOW);
   digitalWrite(spiDataPin, LOW);
 }
@@ -1811,7 +1790,10 @@ void SERIAL_SENDBIT0()
 #ifdef USE_VOLTAGE_MONITORING
 void read_voltage()
 {
-    uint16_t v = analogRead(VBAT_PIN);
+	static uint32_t millis_critical = 0;
+	static uint32_t millis_warning = 0;
+	uint32_t time_now = millis();
+    uint16_t v = analogReadAccurately(VBAT_PIN);
     voltages_sum += v;
     voltages_sum -= voltages[voltage_reading_index];
     voltages[voltage_reading_index++] = v;
@@ -1824,12 +1806,20 @@ void read_voltage()
     voltage = ((voltages_sum /VBAT_SMOOTH) * VBAT_PRESCALER) / vbat_scale + VBAT_OFFSET; // result is Vbatt in 0.1V steps
 #endif
     if(voltage <= critical_voltage) {
-        critical_alarm = true;
-        warning_alarm = false;
+    	if (millis_critical + 5000 < time_now)
+    	{
+        	critical_alarm = true;
+        	warning_alarm = false;
+    	}
     } else if(voltage <= warning_voltage) {
-        warning_alarm = true;
-        critical_alarm = false;
+    	millis_critical = time_now;    
+    	if (millis_warning + 5000 < time_now)
+    	{
+    		warning_alarm = true;
+        	critical_alarm = false;
+    	}
     } else {
+    	millis_critical = millis_warning = time_now;
         critical_alarm = false;
         warning_alarm = false;
     }
@@ -1888,3 +1878,34 @@ void set_buzzer(boolean value){
 #endif
 }
 #endif
+
+
+long readVcc()
+{
+	long result;
+	// Read 1.1V reference against AVcc
+	ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+	delay(2); // Wait for Vref to settle
+	ADCSRA |= _BV(ADSC); // Convert
+	while (bit_is_set(ADCSRA,ADSC));
+	result = ADCL;
+	result |= ADCH<<8;
+	result = 1125300L / result; // Back-calculate AVcc in mV
+	return result;
+}
+
+long analogReadAccurately(int pin)
+{
+	static long vcc = 5000;
+	static uint32_t last_vcc_check = 0;
+
+	uint32_t time_now = millis();
+	if (last_vcc_check + 500 < time_now)
+	{
+		vcc = readVcc();
+		last_vcc_check = time_now;
+	}
+	// readVcc returns millivolts
+	return analogRead(pin) * vcc/5000;
+}
+

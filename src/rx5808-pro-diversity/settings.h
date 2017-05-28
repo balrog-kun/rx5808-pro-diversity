@@ -114,7 +114,7 @@ SOFTWARE.
     // these are default values
     #define WARNING_VOLTAGE 70 // 3.5V per cell for 2S
     #define CRITICAL_VOLTAGE 66 // 3.3V per cell for 2S
-    #define VBAT_SCALE 75
+    #define VBAT_SCALE 55
     #define VBAT_OFFSET 0
     // alarm sounds - by default every 5 seconds an alarm is turned on
     // for critical alarm its 3 long beeps
@@ -129,12 +129,17 @@ SOFTWARE.
 #define sevenSegDigit1Pin 2
 #define sevenSegDigit2Pin 3
 
+// eachine vr d2 button pin
+#define eachineVRD2ButtonPin 4
+
+
 // this two are minimum required
-#define buttonDown 5
-#define buttonMode 5
+#define buttonDown 2
+#define buttonUp 4
 // optional comfort buttons
-#define buttonUp 5
-#define buttonSave 5
+#define buttonSelect 3
+#define buttonCancel 5
+
 // Buzzer
 #define PASSIVE_BUZZER // set if not using active buzzer
 #define buzzer 6
