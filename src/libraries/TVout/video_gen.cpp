@@ -178,6 +178,31 @@ void select_clock(uint8_t mode)
     sei();
 }
 
+void video_pins_release(void)
+{
+    /* Stop interrupts, set pins to Hi-Z */
+    TIMSK1 = 0;
+    DDR_VID &= ~_BV(VID_PIN);
+    DDR_SYNC &= ~_BV(SYNC_PIN);
+    PORT_VID &= ~_BV(VID_PIN);
+    PORT_SYNC &= ~_BV(SYNC_PIN);
+}
+
+void video_pins_restart(void)
+{
+    DDR_VID |= _BV(VID_PIN);
+    DDR_SYNC |= _BV(SYNC_PIN);
+    PORT_VID &= ~_BV(VID_PIN);
+    PORT_SYNC |= _BV(SYNC_PIN);
+    display.scanLine = 0;
+    cli();
+    if (display.clock_source)
+        start_external_clock();
+    else
+        start_internal_clock();
+    sei();
+}
+
 // ISR function for vertical handline, only required for exernal vsync
 void vertical_handle() {
     if(display.clock_source) // externa vsync ONLY if required

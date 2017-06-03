@@ -66,6 +66,9 @@ void active_line();
 void vsync_line();
 void empty();
 
+void video_pins_release();
+void video_pins_restart();
+
 //tone generation properties
 extern volatile long remainingToneVsyncs;
 

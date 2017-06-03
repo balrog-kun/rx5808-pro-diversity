@@ -310,6 +310,14 @@ void setup()
     digitalWrite(eachineVRD2CAMDVRButtonPin, INPUT_PULLUP);
 #endif
 
+#ifdef VIDEO_SWITCH_CONTROL
+    /* Switch both channel mosfets off ASAP */
+    pinMode(videoAV1Pin, OUTPUT);
+    digitalWrite(videoAV1Pin, LOW);
+    pinMode(videoAV2Pin, OUTPUT);
+    digitalWrite(videoAV2Pin, LOW);
+#endif
+
     // optional control
     /*
     pinMode(buttonDown, INPUT);
@@ -640,6 +648,27 @@ void updateSevenSegDisplay()
 #ifdef VIDEO_SWITCH_CONTROL
 static void set_video_switch(int newstate)
 {
+	/*
+	 * In each case first switch off the two channels that are not
+	 * being used and then enable the one channel that we're switching
+	 * to.
+	 */
+	if (newstate == 0) {
+		digitalWrite(videoAV1Pin, LOW);
+		digitalWrite(videoAV2Pin, LOW);
+
+		video_pins_restart();
+	} else if (newstate == 1) {
+		digitalWrite(videoAV2Pin, LOW);
+		video_pins_release();
+
+		digitalWrite(videoAV1Pin, HIGH);
+	} else if (newstate == 2) {
+		digitalWrite(videoAV1Pin, LOW);
+		video_pins_release();
+
+		digitalWrite(videoAV2Pin, HIGH);
+	}
 }
 #endif
 
