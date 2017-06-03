@@ -131,6 +131,7 @@ SOFTWARE.
 
 // eachine vr d2 button pin
 #define eachineVRD2ButtonPin 4
+#define eachineVRD2CAMDVRButtonPin 5
 
 
 // this two are minimum required

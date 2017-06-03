@@ -222,11 +222,15 @@ typedef struct _Button
 }Button;
 
 Button buttons[] = {
-	{eachineVRD2ButtonPin, 0, 0, 0, 0}, // button 1
-	{eachineVRD2ButtonPin, 0, 0, 0, 0}, // butotn 2
+	{eachineVRD2ButtonPin, BUTTON_STATE_NONE, 0, 0, 0}, // button 1
+	{eachineVRD2ButtonPin, BUTTON_STATE_NONE, 0, 0, 0}, // button 2
+#ifdef eachineVRD2CAMDVRButtonPin
+	{eachineVRD2CAMDVRButtonPin, BUTTON_STATE_NONE, 0, 0, 0}, // mode button
+#endif
 };
+#define BUTTON_COUNT (sizeof(buttons) / sizeof(*buttons))
 
-bool is_button_2 = false;
+uint8_t curButton;
 
 bool checkButtonState(int buttonIndex, int state, boolean clear)
 {
@@ -242,6 +246,7 @@ bool checkButtonState(int buttonIndex, int state, boolean clear)
 
 #define BUTTON1 0
 #define BUTTON2 1
+#define MODE_BUTTON 2
 
 #define isPrevBtnClick() checkButtonState(BUTTON2, BUTTON_STATE_CLICK, true)
 #define isNextBtnClick() checkButtonState(BUTTON1, BUTTON_STATE_CLICK, true)
@@ -277,8 +282,9 @@ void setup()
     TIMSK0 |= _BV(OCIE0A);
     digitalWrite(buzzer, LOW);
 #endif
-#ifdef VIDEO_SWITCH_TOGGLE
-  pinMode(videoSwitchButton, OUTPUT);
+#ifdef videoSwitchButton
+    pinMode(videoSwitchButton, OUTPUT);
+    digitalWrite(videoSwitchButton, LOW);
 #endif
 
     // minimum control pins
@@ -295,8 +301,15 @@ void setup()
 
     
   
-	pinMode(eachineVRD2ButtonPin , INPUT);
-	digitalWrite(eachineVRD2ButtonPin, INPUT_PULLUP);
+#ifdef eachineVRD2ButtonPin
+    pinMode(eachineVRD2ButtonPin, INPUT);
+    digitalWrite(eachineVRD2ButtonPin, INPUT_PULLUP);
+#endif
+#ifdef eachineVRD2CAMDVRButtonPin
+    pinMode(eachineVRD2CAMDVRButtonPin, INPUT);
+    digitalWrite(eachineVRD2CAMDVRButtonPin, INPUT_PULLUP);
+#endif
+
     // optional control
     /*
     pinMode(buttonDown, INPUT);
@@ -491,6 +504,24 @@ void loop()
 			break;
 	}
 
+#ifdef eachineVRD2CAMDVRButtonPin
+	if (checkButtonState(MODE_BUTTON, BUTTON_STATE_CLICK, true)) {
+#ifdef VIDEO_SWITCH_CONTROL
+		static int video_switch_channel = 0;
+		if (++video_switch_channel >= 3)
+			video_switch_channel = 0;
+		set_video_switch(video_switch_channel);
+#endif
+	} else if (checkButtonState(MODE_BUTTON,
+				BUTTON_STATE_LONG_CLICK, true)) {
+#ifdef videoSwitchButton
+		digitalWrite(videoSwitchButton, HIGH);
+		delay(200);
+		digitalWrite(videoSwitchButton, LOW);
+#endif
+	}
+#endif
+
 	updateScreen();
 
 
@@ -592,21 +623,25 @@ uint8_t seven7SegHexSymbol[] = {SEVEN_SEG_0,SEVEN_SEG_1,SEVEN_SEG_2, SEVEN_SEG_3
                                 SEVEN_SEG_C, SEVEN_SEG_d, SEVEN_SEG_E, SEVEN_SEG_F};
 void updateSevenSegDisplay()
 {
-	is_button_2 = !is_button_2;
-
-	if (is_button_2)
+	if (curButton == BUTTON2)
 	{
 		digitalWrite(sevenSegDigit2Pin, HIGH);   // second digit off
 		set7SegSymbol(seven7SegHexSymbol[((pgm_read_byte_near(channelNames + channelIndex)>>4))]);
 		digitalWrite(sevenSegDigit1Pin, LOW);  // first digit on
 	}
-	else
+	else if (curButton == BUTTON1)
 	{
 		digitalWrite(sevenSegDigit1Pin, HIGH);   // first digit off
 		set7SegSymbol(seven7SegHexSymbol[(pgm_read_byte_near(channelNames + channelIndex)&0xF)]);
 		digitalWrite(sevenSegDigit2Pin, LOW);   // second digit on
 	}
 }
+
+#ifdef VIDEO_SWITCH_CONTROL
+static void set_video_switch(int newstate)
+{
+}
+#endif
 
 void processButton(int buttonIndex, boolean handleMultiClicks)
 {		
@@ -703,16 +738,10 @@ void processButton(int buttonIndex, boolean handleMultiClicks)
 void processButtons(boolean handleMultiClicks)
 {
 	updateSevenSegDisplay();
-	
-	if (is_button_2)
-	{
-		processButton(BUTTON2, handleMultiClicks);
-	}
-	else
-	{
-		processButton(BUTTON1, handleMultiClicks);
-	}
 
+	processButton(curButton, handleMultiClicks);
+	if (++curButton >= BUTTON_COUNT)
+		curButton = 0;
 }
 
 void stateModeMenu()
