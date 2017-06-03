@@ -401,7 +401,7 @@ void screens::updateScreenSaver(char active_receiver, uint8_t rssi, uint8_t rssi
 // not used in TVOut ... yet
 }
 #ifdef USE_VOLTAGE_MONITORING
-void screens::updateVoltageScreenSaver(int voltage, boolean alarm){
+void screens::updateVoltageScreenSaver(int voltage, bool alarm){
 // not used in TVOut ... yet
 }
 #endif
@@ -422,6 +422,7 @@ void screens::diversity(uint8_t diversity_mode) {
     TV.draw_rect(0,3+(diversity_mode+1)*MENU_Y_SIZE,127,12,  WHITE, INVERT);
 }
 void screens::updateDiversity(char active_receiver, uint8_t rssiA, uint8_t rssiB){
+    #undef RSSI_BAR_SIZE
     #define RSSI_BAR_SIZE 100
     uint8_t rssi_scaled=map(rssiA, 1, 100, 1, RSSI_BAR_SIZE);
     // clear last bar
