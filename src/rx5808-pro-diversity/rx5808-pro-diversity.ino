@@ -234,7 +234,7 @@ Button buttons[] = {
 };
 #define BUTTON_COUNT (sizeof(buttons) / sizeof(*buttons))
 
-uint8_t curButton;
+bool is_button_2;
 
 bool checkButtonState(int buttonIndex, int state, boolean clear)
 {
@@ -250,7 +250,9 @@ bool checkButtonState(int buttonIndex, int state, boolean clear)
 
 #define BUTTON1 0
 #define BUTTON2 1
+#ifdef eachineVRD2CAMDVRButtonPin
 #define MODE_BUTTON 2
+#endif
 
 #define isPrevBtnClick() checkButtonState(BUTTON2, BUTTON_STATE_CLICK, true)
 #define isNextBtnClick() checkButtonState(BUTTON1, BUTTON_STATE_CLICK, true)
@@ -516,7 +518,7 @@ void loop()
 			break;
 	}
 
-#ifdef eachineVRD2CAMDVRButtonPin
+#ifdef MODE_BUTTON
 	if (checkButtonState(MODE_BUTTON, BUTTON_STATE_CLICK, true)) {
 #ifdef VIDEO_SWITCH_CONTROL
 		if (++video_switch_channel >= 3)
@@ -634,13 +636,15 @@ uint8_t seven7SegHexSymbol[] = {SEVEN_SEG_0,SEVEN_SEG_1,SEVEN_SEG_2, SEVEN_SEG_3
                                 SEVEN_SEG_C, SEVEN_SEG_d, SEVEN_SEG_E, SEVEN_SEG_F};
 void updateSevenSegDisplay()
 {
-	if (curButton == BUTTON2)
+	is_button_2 = !is_button_2;
+
+	if (is_button_2)
 	{
 		digitalWrite(sevenSegDigit2Pin, HIGH);   // second digit off
 		set7SegSymbol(seven7SegHexSymbol[((pgm_read_byte_near(channelNames + channelIndex)>>4))]);
 		digitalWrite(sevenSegDigit1Pin, LOW);  // first digit on
 	}
-	else if (curButton == BUTTON1)
+	else
 	{
 		digitalWrite(sevenSegDigit1Pin, HIGH);   // first digit off
 		set7SegSymbol(seven7SegHexSymbol[(pgm_read_byte_near(channelNames + channelIndex)&0xF)]);
@@ -772,9 +776,14 @@ void processButtons(boolean handleMultiClicks)
 {
 	updateSevenSegDisplay();
 
-	processButton(curButton, handleMultiClicks);
-	if (++curButton >= BUTTON_COUNT)
-		curButton = 0;
+	if (is_button_2)
+		processButton(BUTTON2, handleMultiClicks);
+	else
+		processButton(BUTTON1, handleMultiClicks);
+
+#ifdef MODE_BUTTON
+	processButton(MODE_BUTTON, handleMultiClicks);
+#endif
 }
 
 void stateModeMenu()
