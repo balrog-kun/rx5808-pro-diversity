@@ -142,16 +142,16 @@ SOFTWARE.
 #define buttonCancel 5
 
 // Buzzer
-//#define PASSIVE_BUZZER // set if not using active buzzer
+#define PASSIVE_BUZZER // set if not using active buzzer
 #define buzzer 6
 
 #define VIDEO_SWITCH_TOGGLE 2000
 #define videoSwitchButton 8
 
 // eachine vr d2 AV1/AV2 switching with mosfets
-#define VIDEO_SWITCH_CONTROL
-#define videoAV1Pin A2
-#define videoAV2Pin A3
+//#define VIDEO_SWITCH_CONTROL
+//#define videoAV1Pin A2
+//#define videoAV2Pin A3
 
 // key debounce delay in ms
 // NOTE: good values are in the range of 100-200ms
