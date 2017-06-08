@@ -177,6 +177,10 @@ char call_sign[10];
 bool settings_beeps = true;
 bool settings_orderby_channel = true;
 
+#ifdef VIDEO_SWITCH_CONTROL
+uint8_t video_switch_channel = 0;
+#endif
+
 #ifdef PASSIVE_BUZZER
 boolean buzzer_on = false;
 boolean buzzer_pin_low = true;
@@ -515,10 +519,9 @@ void loop()
 #ifdef eachineVRD2CAMDVRButtonPin
 	if (checkButtonState(MODE_BUTTON, BUTTON_STATE_CLICK, true)) {
 #ifdef VIDEO_SWITCH_CONTROL
-		static int video_switch_channel = 0;
 		if (++video_switch_channel >= 3)
 			video_switch_channel = 0;
-		set_video_switch(video_switch_channel);
+		set_video_switch();
 #endif
 	} else if (checkButtonState(MODE_BUTTON,
 				BUTTON_STATE_LONG_CLICK, true)) {
@@ -646,8 +649,9 @@ void updateSevenSegDisplay()
 }
 
 #ifdef VIDEO_SWITCH_CONTROL
-static void set_video_switch(int newstate)
+static void set_video_switch(void)
 {
+	uint8_t newstate = video_switch_channel;
 	/*
 	 * In each case first switch off the two channels that are not
 	 * being used and then enable the one channel that we're switching
@@ -1356,13 +1360,23 @@ void stateManualSeek()
 				state=STATE_MODE_MENU;
 			}
         }
-#ifndef TVOUT_SCREENS
+#if defined(TVOUT_SCREENS) || defined(VIDEO_SWITCH_CONTROL)
         // change to screensaver after lock and 5 seconds has passed.
         if(time_screen_saver+5000 < millis() && time_screen_saver != 0 && rssi > 50 ||
             (time_screen_saver != 0 && time_screen_saver + (SCREENSAVER_TIMEOUT*1000) < millis())) {
             state = STATE_SCREEN_SAVER;
+#ifdef VIDEO_SWITCH_CONTROL
+            /*
+             * Switch to the AV1 input which should now be showing the
+             * selected video channel from the Rx.
+             */
+            if (video_switch_channel == 0) {
+                video_switch_channel = 1;
+                set_video_switch();
+            }
+#endif /* VIDEO_SWITCH_CONTROL */
         }
-#endif
+#endif /* TVOUT_SCREENS || VIDEO_SWITCH_CONTROL */
 #ifndef USE_VOLTAGE_MONITORING
 #define voltage 0
 #endif
@@ -1524,29 +1538,29 @@ void stateScreenSaver()
     if(state == STATE_SCREEN_SAVER) {
 #ifdef USE_DIVERSITY
         drawScreen.screenSaver(diversity_mode, pgm_read_byte_near(channelNames + channelIndex), pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
-#else
+#else /* USE_DIVERSITY */
         drawScreen.screenSaver(pgm_read_byte_near(channelNames + channelIndex), pgm_read_word_near(channelFreqTable + channelIndex), call_sign);
-#endif
+#endif /* USE_DIVERSITY */
 #ifdef USE_VOLTAGE_MONITORING
             read_voltage();
             voltage_alarm();
             drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
-#endif
+#endif /* USE_VOLTAGE_MONITORING */
         do{
             rssi = readRSSI();
 
 #ifdef USE_DIVERSITY
             drawScreen.updateScreenSaver(active_receiver, rssi, readRSSI(useReceiverA), readRSSI(useReceiverB));
-#else
+#else /* USE_DIVERSITY */
             drawScreen.updateScreenSaver(rssi);
-#endif
+#endif /* USE_DIVERSITY */
 
 #ifdef USE_VOLTAGE_MONITORING
             read_voltage();
             voltage_alarm();
 
             drawScreen.updateVoltageScreenSaver(voltage, warning_alarm || critical_alarm);
-#endif
+#endif /* USE_VOLTAGE_MONITORING */
 			processButtons(false);
         }
         while(!peekSelectClick() && !peekPrevBtnClick() && !peekNextBtnClick()); // wait for next button press
@@ -1554,7 +1568,7 @@ void stateScreenSaver()
         time_screen_saver=0;
         return;
     }
-#endif
+#endif /* TVOUT_SCREENS */
 }
 
 void beep(uint16_t time)
