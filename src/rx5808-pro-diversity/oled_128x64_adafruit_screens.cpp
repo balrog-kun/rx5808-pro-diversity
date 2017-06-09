@@ -791,7 +791,7 @@ void screens::save(uint8_t mode, uint8_t channelIndex, uint16_t channelFrequency
     uint8_t active_channel = channelIndex%CHANNEL_BAND_SIZE+1; // get channel inside band
     display.print(active_channel,DEC);
     display.setCursor(5,8*4+4);
-    display.print(PSTR2("FREQ:     GHz"));
+    display.print(PSTR2("FREQ:     MHz"));
     display.setCursor(38,8*4+4);
     display.print(channelFrequency);
 

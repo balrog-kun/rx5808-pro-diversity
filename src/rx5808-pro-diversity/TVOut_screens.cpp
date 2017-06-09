@@ -129,7 +129,7 @@ void screens::seekMode(uint8_t state) {
     TV.draw_line(0,2*TV_Y_GRID,TV_X_MAX,2*TV_Y_GRID,WHITE);
     TV.printPGM(5 ,TV_Y_OFFSET-1+2*TV_Y_GRID,  PSTR("1 2 3 4 5 6 7 8"));
     TV.draw_line(0,3*TV_Y_GRID,TV_X_MAX,3*TV_Y_GRID,WHITE);
-    TV.printPGM(5,TV_Y_OFFSET+3*TV_Y_GRID,  PSTR("FREQ:     GHz"));
+    TV.printPGM(5,TV_Y_OFFSET+3*TV_Y_GRID,  PSTR("FREQ:     MHz"));
     TV.draw_line(0,4*TV_Y_GRID,TV_X_MAX,4*TV_Y_GRID,WHITE);
     TV.select_font(font4x6);
     TV.printPGM(5,TV_Y_OFFSET+4*TV_Y_GRID,  PSTR("RSSI:"));
@@ -558,7 +558,7 @@ void screens::save(uint8_t mode, uint8_t channelIndex, uint16_t channelFrequency
     TV.printPGM(10, 5+3*MENU_Y_SIZE, PSTR("Chan:"));
     uint8_t active_channel = channelIndex%CHANNEL_BAND_SIZE+1; // get channel inside band
     TV.print(50,5+3*MENU_Y_SIZE,active_channel,DEC);
-    TV.printPGM(10, 5+4*MENU_Y_SIZE, PSTR("FREQ:     GHz"));
+    TV.printPGM(10, 5+4*MENU_Y_SIZE, PSTR("FREQ:     MHz"));
     TV.print(50,5+4*MENU_Y_SIZE, channelFrequency);
     TV.printPGM(10, 5+5*MENU_Y_SIZE, PSTR("--- SAVED ---"));
 }
